@@ -1,0 +1,10 @@
+project_name: packer-provisioner-goss
+before:
+  hooks:
+  - go mod download
+builds:
+- env:
+  - CGO_ENABLED=0
+archive:
+  format: binary
+  name_template: '{{ .ProjectName }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}'
