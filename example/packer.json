@@ -48,8 +48,7 @@
       "type": "goss",
       "tests": [
         "goss/goss.yaml"
-      ],
-      "goss_file": "goss.yaml"
+      ]
     },{
       "type": "shell",
       "scripts": [

@@ -39,9 +39,6 @@ type GossConfig struct {
 	// skip ssl check flag
 	SkipSSLChk bool `mapstructure:"skip_ssl"`
 
-	// The --gossfile flag
-	GossFile string `mapstructure:"goss_file"`
-
 	// The --vars flag
 	// Optional file containing variables, used within GOSS templating.
 	// Must be one of the files contained in the Tests array.
@@ -121,10 +118,6 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 
 	if p.config.Tests == nil {
 		p.config.Tests = make([]string, 0)
-	}
-
-	if p.config.GossFile != "" {
-		p.config.GossFile = fmt.Sprintf("--gossfile %s", p.config.GossFile)
 	}
 
 	var errs *packer.MultiError
@@ -216,9 +209,12 @@ func (p *Provisioner) Provision(ui packer.Ui, comm packer.Communicator) error {
 		}
 	}
 
-	ui.Say("Running goss tests...")
-	if err := p.runGoss(ui, comm); err != nil {
-		return fmt.Errorf("Error running Goss: %s", err)
+	for _, file := range p.config.Tests {
+		file := filepath.Base(file)
+		ui.Say(fmt.Sprintf("Running goss tests (%s)...", file))
+		if err := p.runGoss(ui, comm, file); err != nil {
+			return fmt.Errorf("Error running Goss: %s", err)
+		}
 	}
 
 	return nil
@@ -231,7 +227,7 @@ func (p *Provisioner) Cancel() {
 
 // installGoss downloads the Goss binary on the remote host
 func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error {
-	ui.Message(fmt.Sprintf("Installing Goss from, %s", p.config.URL))
+	ui.Message(fmt.Sprintf("Installing Goss from %s", p.config.URL))
 
 	cmd := &packer.RemoteCmd{
 		// Fallback on wget if curl failed for any reason (such as not being installed)
@@ -255,11 +251,11 @@ func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error 
 }
 
 // runGoss runs the Goss tests
-func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator) error {
+func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator, file string) error {
 	cmd := &packer.RemoteCmd{
 		Command: fmt.Sprintf(
-			"cd %s && %s %s %s %s %s validate --retry-timeout %s --sleep %s %s",
-			p.config.RemotePath, p.enableSudo(), p.config.DownloadPath, p.config.GossFile,
+			"cd %s && %s %s --gossfile %s %s %s validate --retry-timeout %s --sleep %s %s",
+			p.config.RemotePath, p.enableSudo(), p.config.DownloadPath, file,
 			p.vars(), p.debug(), p.retryTimeout(), p.sleep(), p.format(),
 		),
 	}
