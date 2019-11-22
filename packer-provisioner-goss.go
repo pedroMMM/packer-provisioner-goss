@@ -1,7 +1,7 @@
 package main
 
 import (
-    "context"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -74,7 +74,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	server.RegisterProvisioner(new(Provisioner))
+	if err := server.RegisterProvisioner(new(Provisioner)); err != nil {
+		panic(err)
+	}
 	server.Serve()
 }
 
@@ -224,7 +226,7 @@ func (p *Provisioner) Provision(ctx context.Context, ui packer.Ui, comm packer.C
 // installGoss downloads the Goss binary on the remote host
 func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error {
 	ui.Message(fmt.Sprintf("Installing Goss from %s", p.config.URL))
-    ctx := context.TODO()
+	ctx := context.TODO()
 
 	cmd := &packer.RemoteCmd{
 		// Fallback on wget if curl failed for any reason (such as not being installed)
