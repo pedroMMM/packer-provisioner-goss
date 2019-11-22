@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/hashicorp/packer/packer"
 	"github.com/hashicorp/packer/packer/plugin"
 	"github.com/hashicorp/packer/template/interpolate"
+	yaml "gopkg.in/yaml.v2"
 )
 
 // GossConfig holds the config data coming in from the packer template
@@ -46,6 +48,10 @@ type GossConfig struct {
 	// Can be YAML or JSON.
 	VarsFile string `mapstructure:"vars_file"`
 
+	// The --vars flag
+	// Lose Variables to be appended to the vars_file
+	Vars map[string]interface{} `mapstructure:"vars"`
+
 	// The remote folder where the goss tests will be uploaded to.
 	// This should be set to a pre-existing directory, it defaults to /tmp
 	RemoteFolder string `mapstructure:"remote_folder"`
@@ -63,6 +69,11 @@ type GossConfig struct {
 }
 
 var validFormats = []string{"documentation", "json", "json_oneline", "junit", "nagios", "nagios_verbose", "rspecish", "silent", "tap"}
+
+const (
+	remoteVarsFile = "cumulative.vars.yaml"
+	tmpVarsFile    = "/tmp/cumulative.vars.yaml"
+)
 
 // Provisioner implements a packer Provisioner
 type Provisioner struct {
@@ -162,6 +173,8 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 func (p *Provisioner) Provision(ctx context.Context, ui packer.Ui, comm packer.Communicator) error {
 	ui.Say("Provisioning with Goss")
 
+	vars := make(map[string]interface{}, 0)
+
 	if !p.config.SkipInstall {
 		if err := p.installGoss(ui, comm); err != nil {
 			return fmt.Errorf("Error installing Goss: %s", err)
@@ -181,12 +194,35 @@ func (p *Provisioner) Provision(ctx context.Context, ui packer.Ui, comm packer.C
 			return fmt.Errorf("Error stating file: %s", err)
 		}
 		if vf.Mode().IsRegular() {
-			ui.Message(fmt.Sprintf("Uploading vars file %s", p.config.VarsFile))
-			varsDest := filepath.ToSlash(filepath.Join(p.config.RemotePath, filepath.Base(p.config.VarsFile)))
-			if err := p.uploadFile(ui, comm, varsDest, p.config.VarsFile); err != nil {
-				return fmt.Errorf("Error uploading vars file: %s", err)
+			yamlFile, err := ioutil.ReadFile(p.config.VarsFile)
+			if err != nil {
+				return err
+			}
+
+			if err := yaml.Unmarshal(yamlFile, vars); err != nil {
+				return err
 			}
 		}
+	}
+
+	for k, v := range p.config.Vars {
+		vars[k] = v
+	}
+
+	varsRaw, err := yaml.Marshal(vars)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(tmpVarsFile, varsRaw, 0644)
+	if err != nil {
+		return err
+	}
+
+	varsDest := filepath.ToSlash(filepath.Join(p.config.RemotePath, remoteVarsFile))
+	ui.Message(fmt.Sprintf("Uploading vars file %s", varsDest))
+	if err := p.uploadFile(ui, comm, varsDest, tmpVarsFile); err != nil {
+		return fmt.Errorf("Error uploading vars file: %s", err)
 	}
 
 	for _, src := range p.config.Tests {
@@ -215,7 +251,7 @@ func (p *Provisioner) Provision(ctx context.Context, ui packer.Ui, comm packer.C
 	for _, file := range p.config.Tests {
 		file := filepath.Base(file)
 		ui.Say(fmt.Sprintf("Running goss tests (%s)...", file))
-		if err := p.runGoss(ui, comm, file); err != nil {
+		if err := p.runGoss(ui, comm, file, &varsDest); err != nil {
 			return fmt.Errorf("Error running Goss: %s", err)
 		}
 	}
@@ -250,14 +286,14 @@ func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error 
 }
 
 // runGoss runs the Goss tests
-func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator, file string) error {
+func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator, file string, vars *string) error {
 	ctx := context.TODO()
 
 	cmd := &packer.RemoteCmd{
 		Command: fmt.Sprintf(
 			"cd %s && %s %s --gossfile %s %s %s validate --retry-timeout %s --sleep %s %s",
 			p.config.RemotePath, p.enableSudo(), p.config.DownloadPath, file,
-			p.vars(), p.debug(), p.retryTimeout(), p.sleep(), p.format(),
+			p.vars(vars), p.debug(), p.retryTimeout(), p.sleep(), p.format(),
 		),
 	}
 	if err := cmd.RunWithUi(ctx, comm, ui); err != nil {
@@ -299,9 +335,9 @@ func (p *Provisioner) format() string {
 	return ""
 }
 
-func (p *Provisioner) vars() string {
-	if p.config.VarsFile != "" {
-		return fmt.Sprintf("--vars %s", filepath.ToSlash(filepath.Join(p.config.RemotePath, filepath.Base(p.config.VarsFile))))
+func (p *Provisioner) vars(file *string) string {
+	if p.config.VarsFile != "" || len(p.config.Vars) > 0 {
+		return fmt.Sprintf("--vars %s", *file)
 	}
 	return ""
 }
