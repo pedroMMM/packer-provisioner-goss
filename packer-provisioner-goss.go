@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -73,7 +74,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	server.RegisterProvisioner(new(Provisioner))
+	if err := server.RegisterProvisioner(new(Provisioner)); err != nil {
+		panic(err)
+	}
 	server.Serve()
 }
 
@@ -156,7 +159,7 @@ func (p *Provisioner) Prepare(raws ...interface{}) error {
 }
 
 // Provision runs the Goss Provisioner
-func (p *Provisioner) Provision(ui packer.Ui, comm packer.Communicator) error {
+func (p *Provisioner) Provision(ctx context.Context, ui packer.Ui, comm packer.Communicator) error {
 	ui.Say("Provisioning with Goss")
 
 	if !p.config.SkipInstall {
@@ -220,14 +223,10 @@ func (p *Provisioner) Provision(ui packer.Ui, comm packer.Communicator) error {
 	return nil
 }
 
-// Cancel just exists when provision is cancelled
-func (p *Provisioner) Cancel() {
-	os.Exit(0)
-}
-
 // installGoss downloads the Goss binary on the remote host
 func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error {
 	ui.Message(fmt.Sprintf("Installing Goss from %s", p.config.URL))
+	ctx := context.TODO()
 
 	cmd := &packer.RemoteCmd{
 		// Fallback on wget if curl failed for any reason (such as not being installed)
@@ -237,13 +236,13 @@ func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error 
 			p.sslFlag("wget"), p.userPass("wget"), p.config.DownloadPath, p.config.URL),
 	}
 	ui.Message(fmt.Sprintf("Downloading Goss to %s", p.config.DownloadPath))
-	if err := cmd.StartWithUi(comm, ui); err != nil {
+	if err := cmd.RunWithUi(ctx, comm, ui); err != nil {
 		return fmt.Errorf("Unable to download Goss: %s", err)
 	}
 	cmd = &packer.RemoteCmd{
 		Command: fmt.Sprintf("chmod 555 %s && %s --version", p.config.DownloadPath, p.config.DownloadPath),
 	}
-	if err := cmd.StartWithUi(comm, ui); err != nil {
+	if err := cmd.RunWithUi(ctx, comm, ui); err != nil {
 		return fmt.Errorf("Unable to install Goss: %s", err)
 	}
 
@@ -252,6 +251,8 @@ func (p *Provisioner) installGoss(ui packer.Ui, comm packer.Communicator) error 
 
 // runGoss runs the Goss tests
 func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator, file string) error {
+	ctx := context.TODO()
+
 	cmd := &packer.RemoteCmd{
 		Command: fmt.Sprintf(
 			"cd %s && %s %s --gossfile %s %s %s validate --retry-timeout %s --sleep %s %s",
@@ -259,10 +260,10 @@ func (p *Provisioner) runGoss(ui packer.Ui, comm packer.Communicator, file strin
 			p.vars(), p.debug(), p.retryTimeout(), p.sleep(), p.format(),
 		),
 	}
-	if err := cmd.StartWithUi(comm, ui); err != nil {
+	if err := cmd.RunWithUi(ctx, comm, ui); err != nil {
 		return err
 	}
-	if cmd.ExitStatus != 0 {
+	if cmd.ExitStatus() != 0 {
 		return fmt.Errorf("goss non-zero exit status")
 	}
 	ui.Say(fmt.Sprintf("Goss tests ran successfully"))
@@ -351,13 +352,15 @@ func (p *Provisioner) userPass(cmdType string) string {
 // createDir creates a directory on the remote server
 func (p *Provisioner) createDir(ui packer.Ui, comm packer.Communicator, dir string) error {
 	ui.Message(fmt.Sprintf("Creating directory: %s", dir))
+	ctx := context.TODO()
+
 	cmd := &packer.RemoteCmd{
 		Command: fmt.Sprintf("mkdir -p '%s'", dir),
 	}
-	if err := cmd.StartWithUi(comm, ui); err != nil {
+	if err := cmd.RunWithUi(ctx, comm, ui); err != nil {
 		return err
 	}
-	if cmd.ExitStatus != 0 {
+	if cmd.ExitStatus() != 0 {
 		return fmt.Errorf("non-zero exit status")
 	}
 	return nil
